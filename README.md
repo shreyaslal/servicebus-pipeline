@@ -51,17 +51,19 @@ Then open Azure Portal, the Container App, **Metrics**, add `Replica Count`. In 
 
 ## Results
 
-Fill this in from your own run. Do not use numbers you did not measure.
+Measured on Azure Container Apps (East Asia), Service Bus Standard, 200 ms simulated processing per message, 16 concurrent calls per replica.
 
 | Metric | Value |
 | --- | --- |
-| Messages | _from measure.sh_ |
-| Drain time | _from measure.sh_ |
-| Throughput | _from measure.sh_ |
-| Peak replicas | _from measure.sh_ |
-| First scale-up | _from measure.sh_ |
+| Messages | 20,000 |
+| Baseline replicas | 1 |
+| Peak replicas | 10 (KEDA, target 20 messages per replica) |
+| Drain time | about 38 s |
+| Throughput | about 500 msg/s (script reported 526) |
 
-![Replica count and active messages](docs/scale-up.png)
+Replicas went 1 to 10 during the burst and back to 1 after the queue drained. The portal plots the pre-test period as 0 because it has no data there; the baseline was 1 replica (min replicas = 1). Throughput and timing are approximate: Azure Monitor samples at 1-minute granularity.
+
+![Replica count scaling 1 to 10 to 1](docs/scale-up.png)
 
 ## Design notes and trade-offs
 

@@ -7,11 +7,8 @@ param prefix string
 
 param location string = resourceGroup().location
 
-@description('Stage 1 creates shared infrastructure only. Stage 2 (true) also deploys the container app.')
-param deployApp bool = false
-
-@description('Full image reference, e.g. <acr>.azurecr.io/worker:<sha>. Required when deployApp is true.')
-param image string = ''
+@description('Public container image, e.g. ghcr.io/<owner>/servicebus-worker:<tag>.')
+param image string
 
 @minValue(1)
 param minReplicas int = 1
@@ -59,34 +56,18 @@ resource queueRule 'Microsoft.ServiceBus/namespaces/queues/authorizationRules@20
   }
 }
 
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: '${prefix}acr${uniq}'
-  location: location
-  sku: { name: 'Basic' }
-  properties: { adminUserEnabled: false }
-}
-
-resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: '${prefix}-pull-id'
-  location: location
-}
-
-var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-
-resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: acr
-  name: guid(acr.id, pullIdentity.id, acrPullRoleId)
-  properties: {
-    principalId: pullIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
-  }
-}
-
-resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: '${prefix}-env'
+// Express environments do not support custom (KEDA) scale rules, so the mode is pinned explicitly.
+resource env 'Microsoft.App/managedEnvironments@2026-07-01' = {
+  name: '${prefix}-wp-env'
   location: location
   properties: {
+    environmentMode: 'WorkloadProfiles'
+    workloadProfiles: [
+      {
+        name: 'Consumption'
+        workloadProfileType: 'Consumption'
+      }
+    ]
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
@@ -97,16 +78,12 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-resource worker 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
+resource worker 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${prefix}-worker'
   location: location
-  dependsOn: [acrPull]
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: { '${pullIdentity.id}': {} }
-  }
   properties: {
     managedEnvironmentId: env.id
+    workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
@@ -114,12 +91,6 @@ resource worker 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
         targetPort: 8080
         transport: 'auto'
       }
-      registries: [
-        {
-          server: acr.properties.loginServer
-          identity: pullIdentity.id
-        }
-      ]
       secrets: [
         {
           name: 'sb-conn'
@@ -178,9 +149,7 @@ resource worker 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
   }
 }
 
-output acrName string = acr.name
-output acrLoginServer string = acr.properties.loginServer
 output serviceBusNamespace string = sbNamespace.name
 output queueName string = queueName
-output appName string = '${prefix}-worker'
-output appFqdn string = deployApp ? worker.properties.configuration.ingress.fqdn : ''
+output appName string = worker.name
+output appFqdn string = worker.properties.configuration.ingress.fqdn

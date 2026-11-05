@@ -17,8 +17,8 @@ POST /publish ──► Service Bus queue "orders" ──► Consumer (async pro
 | Async consumer | `ServiceBusProcessor`, manual settlement, 16 concurrent calls per replica |
 | Retries | SDK exponential retry for transport errors; abandon-and-redeliver for handler failures |
 | Dead-lettering | Malformed or invalid messages dead-lettered at once; handler failures dead-lettered after `maxDeliveryCount = 5` |
-| Infrastructure as code | `infra/main.bicep`: namespace, queue, ACR, Log Analytics, Container Apps environment, app |
-| Pipeline | build, test, two-stage deploy, `/health` check (`.github/workflows/ci-cd.yml`) |
+| Infrastructure as code | `infra/main.bicep`: namespace, queue, Log Analytics, Container Apps environment (`environmentMode: WorkloadProfiles`, because Express does not support KEDA rules), app |
+| Pipeline | build, test, container image to GHCR, optional Azure deploy + `/health` check (`.github/workflows/ci-cd.yml`) |
 | Autoscaling | KEDA `azure-servicebus` rule, target 20 messages per replica, 1..10 replicas |
 | Tests | `dotnet test`: 8 tests on the retry and dead-letter decision logic |
 
@@ -30,10 +30,16 @@ dotnet test
 
 ## Deploy
 
-1. Create a GitHub repo and push this folder.
-2. Create an Entra app registration with a federated credential for the repo (GitHub OIDC) and give it `Contributor` and `User Access Administrator` on a subscription or resource group scope.
-3. In GitHub, set secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, variables `PREFIX` (3-12 lowercase letters or digits), `RESOURCE_GROUP`, optional `LOCATION`, and an environment named `azure`.
-4. Push to `main`. The pipeline tests, provisions, builds the image in ACR, deploys the app, and checks `/health`.
+1. Push this folder to GitHub. The `ci-cd` workflow runs the tests and publishes the image to `ghcr.io/<owner>/servicebus-worker:<sha>`. Make that package public (GitHub profile, Packages, servicebus-worker, Package settings, Change visibility).
+2. Deploy from any shell with the Azure CLI:
+
+```bash
+az group create -n rg-sbpipeline -l <allowed-region>
+az deployment group create -g rg-sbpipeline -f infra/main.bicep \
+  -p prefix=sbdemo location=<allowed-region> image=ghcr.io/<owner>/servicebus-worker:<sha>
+```
+
+3. Optional: to let the workflow deploy itself, create an Entra app with a GitHub OIDC credential, set secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, variables `PREFIX`, `RESOURCE_GROUP`, `LOCATION`, `AZURE_DEPLOY=true`, and an environment named `azure`.
 
 ## Measure it
 
